@@ -1,7 +1,7 @@
-## gpu_sudoku
+# gpu_sudoku
 An application for solving sudoku using cpu and gpu. The central point is to compare solver implementations on datasets composed of different number of boards.
 
-## Pomysł
+# Pomysł
 Jeśli mogę ustalić wartość w danej komórce to mogę pozbyć się tej wartości w pozostałych komórkach zajdujących się
 w tym samym bloku 3x3, kolumnie i wierszu nakładając na nie ograniczenie uniemożliwające nadanie takiej samej wartości.
 
@@ -9,7 +9,7 @@ Zastosowanie ograniczenia może odkryć kolejne pole, w którym mogę ustalić w
 nałożenia kolejnych ograniczeń. Powtarzanie tej procedury może doprowadzić mnie do całkowitego rozwiąznia planszy lub ustalić 
 część pól.
 
-## Implementacja algorytmu
+# Implementacja algorytmu
 1) Plansza to tablica komórek (ozn. X) długości 81.
 2) Blok 81 wątków utożsamię z jedną planszą (tj. jeden wątek na jedną X)
 3) X to int 16-bitowy, w bitach 1-9 trzymam informację o nałożonych ograniczeniach.
@@ -24,5 +24,5 @@ część pól.
    nierozwiązywalna lub nasza strategia nie pasuje do danej planszy. Wtedy uruchamiamy algorytm brutalny dla obecnego stanu
    planszy.
 
-# Aktualizacja ograniczeń w komórce
+## Aktualizacja ograniczeń w komórce
 Do aktualizacji ograniczeń
