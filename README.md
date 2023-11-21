@@ -11,6 +11,7 @@ część pól.
 
 # Implementacja algorytmu
 ## Założenia i logika
+```
 1) Plansza to tablica komórek (ozn. X) długości 81.
 2) Blok 81 wątków utożsamię z jedną planszą (tj. jeden wątek na jedną X)
 3) X to int 16-bitowy, w bitach 1-9 trzymam informację o nałożonych ograniczeniach.
@@ -24,6 +25,6 @@ część pól.
    W przypadku, w którym żaden wątek nie zaktualizuje już planszy, a nie wszystkie wątki zostaną zakończone to plansza jest
    nierozwiązywalna lub nasza strategia nie pasuje do danej planszy. Wtedy uruchamiamy algorytm brutalny dla obecnego stanu
    planszy.
-
+```
 ## Aktualizacja ograniczeń w komórce
 Do aktualizacji ograniczeń
