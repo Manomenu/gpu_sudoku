@@ -10,6 +10,7 @@ nałożenia kolejnych ograniczeń. Powtarzanie tej procedury może doprowadzić 
 część pól.
 
 # Implementacja algorytmu
+## Założenia i logika
 1) Plansza to tablica komórek (ozn. X) długości 81.
 2) Blok 81 wątków utożsamię z jedną planszą (tj. jeden wątek na jedną X)
 3) X to int 16-bitowy, w bitach 1-9 trzymam informację o nałożonych ograniczeniach.
