@@ -1,5 +1,5 @@
 # gpu_sudoku
-An application for solving sudoku using cpu and gpu. The central point is to compare solver implementations on datasets composed of different number of boards.
+Aplikacja do rozwiązywania na cpu i gpu sudoku. Celem jest przedstawienie wydajności fragmentów algorytmu na cpu i porównanie go z cpu.
 
 # Pomysł
 Jeśli mogę ustalić wartość w danej komórce to mogę pozbyć się tej wartości w pozostałych komórkach zajdujących się
