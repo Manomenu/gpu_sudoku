@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CudaCompile Include="main_program.cu" />
+    <CudaCompile Include="config.cuh" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="utils">
+      <UniqueIdentifier>{57193662-293c-436f-8ff9-642eb78e450e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="dependencies">
+      <UniqueIdentifier>{fb3f36e3-fd38-4329-9f54-a366d547a2ab}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="cuda_utils.cuh">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="boards_loader.cuh">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="dev_array.cuh">
+      <Filter>utils</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
