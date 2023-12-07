@@ -91,7 +91,6 @@
   <ItemGroup>
     <ClInclude Include="boards_loader.cuh" />
     <ClInclude Include="cuda_utils.cuh" />
-    <ClInclude Include="dev_array.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

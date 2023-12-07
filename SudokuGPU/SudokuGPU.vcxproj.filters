@@ -19,8 +19,5 @@
     <ClInclude Include="boards_loader.cuh">
       <Filter>utils</Filter>
     </ClInclude>
-    <ClInclude Include="dev_array.cuh">
-      <Filter>utils</Filter>
-    </ClInclude>
   </ItemGroup>
 </Project>
