@@ -103,9 +103,6 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
     __shared__ int backtrackingDone;
     __shared__ int decisionDone;
     __shared__ int currentDecisionSquare;
-    __shared__ int fail;
-    __shared__ int fail2;
-    __shared__ int fail3;
     __shared__ int mutexBoard;
 
     if (tid == 0)
@@ -138,17 +135,6 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
             squaresSet = 0;
             isBlockInvalid = 0;
 
-            if (tid < 80 && (board[tid] == board[tid + 1] && board[tid] > 0) && tid / 9 == (tid + 1) / 9)
-            {
-                int ffwef = 3;
-                ffwef = 5;
-            }
-            if (tid < 80 && (starterBoard[tid] == starterBoard[tid + 1] && starterBoard[tid] > 0) && tid / 9 == (tid + 1) / 9)
-            {
-                int ffwef = 3;
-                ffwef = 5;
-            }
-
             isThreadProgressing = updateConstraints(board, tid, constraints);
             isBlockProgressing = __syncthreads_or(isThreadProgressing);
 
@@ -156,17 +142,6 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
             isBlockInvalid = __syncthreads_or(isThreadInvalid);
             isBlockProgressing = __syncthreads_or(isThreadProgressing) | isBlockProgressing;
             squaresSet = __syncthreads_count(isSquareSet);
-
-            if (tid < 80 && (board[tid] == board[tid + 1] && board[tid] > 0) && tid / 9 == (tid + 1) / 9)
-            {
-                int ffwef = 3;
-                ffwef = 5;
-            }
-            if (tid < 80 && (starterBoard[tid] == starterBoard[tid + 1] && starterBoard[tid] > 0) && tid / 9 == (tid + 1) / 9)
-            {
-                int ffwef = 3;
-                ffwef = 5;
-            }
 
             if (squaresSet == BOARD_SIZE * BOARD_SIZE) // jesli mamy rozwiazanie
             {
@@ -218,9 +193,6 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
                             if ((takenDigits | 1 << starterBoard[decisionSquares[decisionsTaken]]) > takenDigits)
                             {
                                 backtrackingDone = 1;
-                                fail = takenDigits;
-                                fail2 = takenDigits | 1 << starterBoard[decisionSquares[decisionsTaken]];
-                                fail3 = starterBoard[decisionSquares[decisionsTaken]];
                             }
                         }
                         __syncthreads();
@@ -239,18 +211,6 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
                         if (decisionsTaken == 0) return;
                     }
                 }
-
-                if (tid < 80 && (board[tid] == board[tid + 1] && board[tid] > 0) && tid / 9 == (tid + 1) / 9)
-                {
-                    int ffwef = 3;
-                    ffwef = 5;
-                }
-                if (tid < 80 && (starterBoard[tid] == starterBoard[tid + 1] && starterBoard[tid] > 0) && tid / 9 == (tid + 1) / 9)
-                {
-                    int ffwef = 3;
-                    ffwef = 5;
-                }
-
                 break;
             }
 
@@ -310,29 +270,10 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
                         else
                         {
                             starterBoard[currentDecisionSquare]++; 
-
-                            // debug
-                            if (starterBoard[currentDecisionSquare] > 9)
-                            {
-                                int gergegr = 3;
-                                gergegr = 4;
-                            }
                         }
                     }
                     __syncthreads();
                 }
-
-                if (tid < 80 && (board[tid] == board[tid + 1] && board[tid] > 0) && tid / 9 == (tid + 1) / 9)
-                {
-                    int ffwef = 3;
-                    ffwef = 5;
-                }
-                if (tid < 80 && (starterBoard[tid] == starterBoard[tid + 1] && starterBoard[tid] > 0) && tid / 9 == (tid + 1) / 9)
-                {
-                    int ffwef = 3;
-                    ffwef = 5;
-                }
-
                 break;
             }
         }
@@ -1011,7 +952,6 @@ void solveBoards(board_t* inputBoards, board_t* solvedBoards)
     int*        dev_nextBoardId;
     
     #pragma region Device_memory_allocation
-    // maybe I could just assign 1.5 * BOARDS_BATCH_SIZE + 1 for boards, but i will try this way...
 
     cudaStatus = cudaMalloc((void**)&dev_boards, sizeof(board_t) * (2 * BOARDS_BATCH_SIZE + 1));
     validateCudaStatus(cudaStatus);
@@ -1202,19 +1142,6 @@ __device__ int fillBoard(board_t& board, int tid, constraints_t& constraints, in
     
      if (digit < 10 && tid == min)
     {
-        if (tid < 80 && (board[tid] == board[tid + 1] && board[tid] > 0) && tid / 9 == (tid + 1) / 9)
-        {
-            int ffwef = 3;
-            ffwef = 5;
-        }
-
-        board[tid] = digit;
-
-        if (tid < 80 && (board[tid] == board[tid + 1] && board[tid] > 0) && tid / 9 == (tid + 1) / 9)
-        {
-            int ffwef = 3;
-            ffwef = 5;
-        }
 
         atomicOr(&(constraints.rows[tid / 9]), (1u << board[tid] & ~1u));
         atomicOr(&(constraints.columns[tid % 9]), (1u << board[tid] & ~1u));
