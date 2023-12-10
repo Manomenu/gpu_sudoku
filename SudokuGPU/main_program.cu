@@ -589,9 +589,6 @@ __global__ void solveBoardBFSKernel(board_t* boards, uchar* solvedBoardStatus, i
 
     while (isBlockProgressing)
     {
-        if (tid == 0) isBlockProgressing = 0;
-        __syncthreads();
-
         isThreadProgressing = updateConstraints(board, tid, constraints);
         isBlockProgressing  = __syncthreads_or(isThreadProgressing);
     
@@ -872,16 +869,9 @@ void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_fork
     int     nextBoardId;
     uchar   solvedBoardStatus;
 
-    board_t xd[BOARDS_BATCH_SIZE * 2 + 1];
-
     // forking & solving board
     do
     {
-        if (forkedBoardsCount == 0)
-        {
-            int aaa = 3;
-            aaa = 4;
-        }
         solveBoardBFSKernel<<<forkedBoardsCount, THREADS_IN_BLOCK_NUM>>>(dev_boards, dev_solvedBoardStatus, dev_forkedBoardsCount, dev_nextBoardId);
 
         cudaStatus = cudaGetLastError();
@@ -907,14 +897,10 @@ void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_fork
         cudaStatus = cudaMemcpy(&nextBoardId, dev_nextBoardId, sizeof(int), cudaMemcpyDeviceToHost);
         validateCudaStatus(cudaStatus);
 
-        // might be problematic, consider changing it to standard memcpy
         cudaStatus = cudaMemcpy(dev_boards, dev_boards + nextBoardId - forkedBoardsCount, sizeof(board_t) * forkedBoardsCount, cudaMemcpyDeviceToDevice);
         validateCudaStatus(cudaStatus);
 
         cudaStatus = cudaMemset(dev_nextBoardId, forkedBoardsCount, 1);
-        validateCudaStatus(cudaStatus);
-
-        cudaStatus = cudaMemcpy(xd, dev_boards, sizeof(board_t) * (2 * BOARDS_BATCH_SIZE + 1), cudaMemcpyDeviceToHost);
         validateCudaStatus(cudaStatus);
 
     } while (forkedBoardsCount <= BOARDS_BATCH_SIZE - 8 && kernelIter++ <= MAX_KERNEL_ITERATIONS);    // I will still have place for at least one full fork 
@@ -998,41 +984,29 @@ __device__ int updateConstraints(board_t& board, int tid, constraints_t& constra
 {
     int isBlockProgressing = 0;
     uint old_value;
-    int  stillProgressing = 1;
-    
-    while (stillProgressing)
+
+    old_value = constraints.rows[tid / 9];
+    atomicOr(&(constraints.rows[tid / 9]), (1u << board[tid] & ~1u));
+    __syncthreads();
+    if (old_value < constraints.rows[tid / 9])
     {
-        stillProgressing = 0;
+        isBlockProgressing = 1;
+    }
 
+    old_value = constraints.columns[tid % 9];
+    atomicOr(&(constraints.columns[tid % 9]), (1u << board[tid] & ~1u));
+    __syncthreads();
+    if (old_value < constraints.columns[tid % 9])
+    {
+        isBlockProgressing = 1;
+    }
 
-        old_value = constraints.rows[tid / 9];
-        atomicOr(&(constraints.rows[tid / 9]), (1u << board[tid] & ~1u));
-        __syncthreads();
-        if (old_value < constraints.rows[tid / 9])
-        {
-            isBlockProgressing = 1;
-            stillProgressing = 1;
-        }
-
-        old_value = constraints.columns[tid % 9];
-        atomicOr(&(constraints.columns[tid % 9]), (1u << board[tid] & ~1u));
-        __syncthreads();
-        if (old_value < constraints.columns[tid % 9])
-        {
-            isBlockProgressing = 1;
-            stillProgressing = 1;
-        }
-
-        old_value = constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3];
-        atomicOr(&(constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3]), (1u << board[tid] & ~1u));
-        __syncthreads();
-        if (old_value < constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3])
-        {
-            isBlockProgressing = 1;
-            stillProgressing = 1;
-        }
-
-        stillProgressing = __syncthreads_or(stillProgressing);
+    old_value = constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3];
+    atomicOr(&(constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3]), (1u << board[tid] & ~1u));
+    __syncthreads();
+    if (old_value < constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3])
+    {
+        isBlockProgressing = 1;
     }
 
     return isBlockProgressing;
