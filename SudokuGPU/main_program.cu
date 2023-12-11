@@ -41,15 +41,22 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
 
 __device__ int updateConstraints(board_t& board, int tid, constraints_t& constraints);
 
-__device__ int fillBoard(board_t& board, int tid, constraints_t& constraints, int& isThreadProgressing, int& isSquareSet, int& mutexBoard);
+__device__ int fillBoard(board_t& board, int tid, constraints_t& constraints, int& isThreadProgressing, int& isSquareSet, int* takenValues);
 
 __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus);
 
 __global__ void solveBoardBFSKernel(board_t* boards, uchar* solvedBoardStatus, int* forkedBoardsCount, int* nextBoardId);
 
-void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_forkedBoardsCount, int* dev_nextBoardId, board_t* solvedBoard);
+void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_forkedBoardsCount, int* dev_nextBoardId, board_t* solvedBoard, 
+    std::chrono::milliseconds& copyMemoryDuration, std::chrono::milliseconds& dfsDuration, std::chrono::milliseconds& bfsDuration);
 
 void solveBoards(board_t* inputBoards, board_t* solvedBoards);
+
+#ifdef KOMPUTER_SZKOLA
+
+void solveBoardsCPU(board_t* inputBoards, board_t* solvedBoards);
+
+#endif
 
 #pragma endregion
 
@@ -68,20 +75,84 @@ int main()
 
     #pragma endregion
 
+    #pragma region Reading_input_data
+
+    auto start = std::chrono::high_resolution_clock::now();
+
     BoardsLoader::loadBoardsFromBinary(inputBoards);
 
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    std::cout << "reading input data: " << std::setw(7) << 0.001 * std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " nsec" << std::endl;
+
+    #pragma endregion
+
+    std::cout << "\n" << BOARDS_NUM << " boards\n";
+
+    #pragma region Whole_computing_gpu
+
+    start = std::chrono::high_resolution_clock::now();
+    
     solveBoards(inputBoards, solvedBoards);
+    
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    std::cout << "gpu - whole computing time: " << std::setw(7) << 0.001 * std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " nsec" << std::endl;
+
+    #pragma endregion
+
+    #ifdef KOMPUTER_SZKOLA
+
+    #pragma region Whole_computing_cpu
+
+    start = std::chrono::high_resolution_clock::now();
+
+    solveBoardsCPU(inputBoards, solvedBoards);
+
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    std::cout << "cpu - whole computing time: " << std::setw(7) << 0.001 * std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " nsec" << std::endl;
+
+    #pragma endregion
+
+    #endif // KOMPUTER_SZKOLA
 
     #ifdef DEBUG 
-        printBoard(solvedBoards[0]);
+    printBoard(solvedBoards[0]);
     #endif
 
+    #pragma region Saving_results_to_file
+
+    start = std::chrono::high_resolution_clock::now();
+
     BoardsLoader::saveBoardsToTxt(solvedBoards);
+
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    std::cout << "\n" << "writing output data: " << std::setw(7) << 0.001 * std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " nsec" << std::endl;
+
+    #pragma endregion
 
     return 0;
 }
 
 #pragma region Function_implementations
+
+#ifdef KOMPUTER_SZKOLA
+
+void solveBoardsCPU(board_t* inputBoards, board_t* solvedBoards)
+{
+    for (int i = 0; i < BOARDS_NUM; ++i)
+    {
+        sudokuCPU((char*)inputBoards->cells, (char*)(solvedBoards + i)->cells);
+    }
+}
+
+#endif
 
 __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
 {
@@ -103,11 +174,10 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
     __shared__ int backtrackingDone;
     __shared__ int decisionDone;
     __shared__ int currentDecisionSquare;
-    __shared__ int mutexBoard;
+    __shared__ int takenValues[10];
 
     if (tid == 0)
     {
-        mutexBoard = INT_MAX;
         memset(&constraints, 0, sizeof(constraints_t)); // idk why but it somehow stays with 1022 in each cell before previous solution!
         decisionsTaken = 0;
     }
@@ -138,7 +208,7 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
             isThreadProgressing = updateConstraints(board, tid, constraints);
             isBlockProgressing = __syncthreads_or(isThreadProgressing);
 
-            isThreadInvalid = fillBoard(board, tid, constraints, isThreadProgressing, isSquareSet, mutexBoard);
+            isThreadInvalid = fillBoard(board, tid, constraints, isThreadProgressing, isSquareSet, takenValues);
             isBlockInvalid = __syncthreads_or(isThreadInvalid);
             isBlockProgressing = __syncthreads_or(isThreadProgressing) | isBlockProgressing;
             squaresSet = __syncthreads_count(isSquareSet);
@@ -227,7 +297,7 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
                 if (board[tid] == 0) atomicMin(&currentDecisionSquare, tid);
                 __syncthreads();
 
-                if (currentDecisionSquare == INT_MAX) return; // should never happen!
+                if (currentDecisionSquare == INT_MAX) return;
 
                 if (tid == 0)
                 {
@@ -236,7 +306,6 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
                 }
                 __syncthreads();
 
-                // ustal dostepne wartosci dla nowego pola dycyzji
                 board[tid] = starterBoard[tid];
                 if (tid == currentDecisionSquare) board[tid] = 0;
                 __syncthreads();
@@ -280,280 +349,6 @@ __global__ void solveBoardDFSKernel(board_t* boards, uchar* solvedBoardStatus)
     }
 }
 
-//__global__ void solveBoardDFSKernelx(board_t* boards, uchar* solvedBoardStatus)
-//{
-//    int      tid = threadIdx.x;
-//    int      bid = blockIdx.x;
-//    int      isThreadProgressing;
-//    int      isThreadInvalid;
-//    int      isSquareSet;
-//    board_t& solutionBoard = *(boards + 2 * BOARDS_BATCH_SIZE);
-//
-//    int           isBlockProgressing;
-//    __shared__ int           isBlockInvalid;
-//    __shared__ int           squaresSet;
-//    __shared__ int           new_deciosion_square;
-//    __shared__ int           boardId;
-//    __shared__ bool          canForkBeMade;
-//    __shared__ constraints_t constraints;
-//    __shared__ board_t       board;
-//
-//    __shared__ board_t        starterBoard;
-//    __shared__ int            decision_depth;
-//    //__shared__ short decisions_value[81];
-//    __shared__ short decisions_squares[81];
-//    __shared__ int decision_estabilished;
-//
-//    if (tid == 0)
-//    {
-//        memset(&constraints, 0, sizeof(constraints_t)); // idk why but it somehow stays with 1022 in each cell before previous solution!
-//        isBlockProgressing = 1;
-//        new_deciosion_square = INT_MAX;
-//        canForkBeMade = true;
-//        decision_depth = -1;
-//        decision_estabilished = 0;
-//    }
-//
-//    board[tid] = (boards + bid)->cells[tid];
-//    starterBoard[tid] = board[tid];
-//    //decisions_value[tid] = 0;
-//    decisions_squares[tid] = -1;
-//    __syncthreads();
-//
-//    while (true)
-//    {
-//        while (isBlockProgressing)
-//        {
-//            if (tid == 0) isBlockProgressing = 0;
-//            __syncthreads();
-//
-//            #pragma region standard
-//
-//            isThreadProgressing = updateConstraints(board, tid, constraints);
-//            isBlockProgressing = __syncthreads_or(isThreadProgressing);
-//
-//            isThreadInvalid = fillBoard(board, tid, constraints, isThreadProgressing, isSquareSet);
-//
-//
-//            isBlockInvalid = __syncthreads_or(isThreadInvalid);
-//            isBlockProgressing = __syncthreads_or(isThreadProgressing);
-//            squaresSet = __syncthreads_count(isSquareSet);
-//
-//            if (squaresSet == BOARD_SIZE * BOARD_SIZE)
-//            {
-//                solutionBoard[tid] = board[tid];
-//                if (tid == 0) *solvedBoardStatus = BoardStatus::Solved;
-//                __syncthreads();
-//
-//                return;
-//            }
-//
-//#pragma endregion
-//
-//            if (isBlockInvalid)
-//            {
-//                while (decision_estabilished == 0)
-//                {
-//                    // no solution
-//                    if (decision_depth == 0 && starterBoard[decisions_squares[decision_depth]] == 9 || decision_depth == -1) return;
-//
-//                    // can change last decision
-//                    else if (starterBoard[decisions_squares[decision_depth]] < 9) // might update last decision
-//                    {
-//                        int next_decision = ++starterBoard[decisions_squares[decision_depth]];
-//                        __syncthreads();
-//
-//                        if (tid == 0)
-//                        {
-//                            starterBoard[decisions_squares[decision_depth]] = 0;
-//                        }
-//                        __syncthreads();
-//
-//                        #pragma region clear_constraints
-//                        if (tid < 9)
-//                        {
-//                            constraints.rows[tid] = 0;
-//                        }
-//                        else if (tid < 18)
-//                        {
-//                            constraints.blocks[tid - 9] = 0;
-//                        }
-//                        else if (tid < 27)
-//                        {
-//                            constraints.columns[tid - 18] = 0;
-//                        }
-//                        __syncthreads();
-//#pragma endregion
-//
-//                        updateConstraints(starterBoard, tid, constraints);
-//                        __syncthreads();
-//
-//                        starterBoard[decisions_squares[decision_depth]] = next_decision;
-//                        __syncthreads();
-//
-//                        int takenDigits = constraints.rows[decisions_squares[decision_depth] / 9]
-//                            | constraints.columns[decisions_squares[decision_depth] % 9]
-//                            | constraints.blocks[decisions_squares[decision_depth] / 9 / 3 * 3 + decisions_squares[decision_depth] % 9 / 3];
-//                        __syncthreads();
-//
-//                        if ((takenDigits & (1 << next_decision)) > takenDigits)
-//                        {
-//                            decision_estabilished = 1;
-//                            board[tid] = starterBoard[tid];
-//                        }
-//                        __syncthreads();
-//                    }
-//
-//                    // back off decision
-//                    else
-//                    {
-//                        if (tid == 0)
-//                        {
-//                            starterBoard[decisions_squares[decision_depth]] = 0;
-//                            decisions_squares[decision_depth] = -1;
-//                            decision_depth--;
-//                        }
-//                        __syncthreads();
-//                    }
-//
-//                }
-//                
-//                #pragma region clear_constr
-//                if (tid < 9)
-//                {
-//                    constraints.rows[tid] = 0;
-//                }
-//                else if (tid < 18)
-//                {
-//                    constraints.blocks[tid - 9] = 0;
-//                }
-//                else if (tid < 27)
-//                {
-//                    constraints.columns[tid - 18] = 0;
-//                }
-//#pragma endregion
-//                if (tid == 0)
-//                {
-//                    decision_estabilished = 0;
-//                    isBlockInvalid = 0;
-//                    
-//                }
-//                isBlockProgressing = 1;
-//                __syncthreads();
-//            }
-//        }
-//
-//        // make new decision
-//
-//        isBlockProgressing = 1;
-//
-//        if (board[tid] == 0) atomicMin(&new_deciosion_square, tid);
-//        __syncthreads();
-//
-//        if (tid == 0)
-//        {
-//            decisions_squares[++decision_depth] = new_deciosion_square;
-//        }
-//        __syncthreads();
-//
-//        // find fist valid decision
-//        int availableDigits = ~(constraints.rows[new_deciosion_square / 9]
-//            | constraints.columns[new_deciosion_square % 9]
-//            | constraints.blocks[new_deciosion_square / 9 / 3 * 3 + new_deciosion_square % 9 / 3]) & 0x000003FE;
-//        __syncthreads();
-//
-//        if (availableDigits & 1 << 1)
-//        {
-//            if (tid == new_deciosion_square) 
-//            {
-//                starterBoard[tid] = 1;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 2)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 2;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 3)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 3;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 4)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 4;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 5)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 5;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 6)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 6;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 7)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 7;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 8)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 8;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//        else if (availableDigits & 1 << 9)
-//        {
-//            if (tid == new_deciosion_square)
-//            {
-//                starterBoard[tid] = 9;
-//                board[tid] = starterBoard[tid];
-//            }
-//            __syncthreads();
-//        }
-//
-//        if (tid == 0)
-//        {
-//            isBlockInvalid = 0;
-//            
-//        }
-//        isBlockProgressing = 1;
-//        __syncthreads();
-//    }
-//}
-
 __global__ void solveBoardBFSKernel(board_t* boards, uchar* solvedBoardStatus, int* forkedBoardsCount, int* nextBoardId)
 {
     int      tid = threadIdx.x;
@@ -572,13 +367,12 @@ __global__ void solveBoardBFSKernel(board_t* boards, uchar* solvedBoardStatus, i
     __shared__ bool          canForkBeMade;
     __shared__ constraints_t constraints;
     __shared__ board_t       board;
-    __shared__ int           mutexBoard;
+    __shared__ int           takenValues[10];
 
     if (tid == 0)
     {
         memset(&constraints, 0, sizeof(constraints_t)); // idk why but it somehow stays with 1022 in each cell before previous solution!
         
-        mutexBoard = INT_MAX;
         squareToFork = INT_MAX;
         canForkBeMade = true;
     }
@@ -592,7 +386,7 @@ __global__ void solveBoardBFSKernel(board_t* boards, uchar* solvedBoardStatus, i
         isThreadProgressing = updateConstraints(board, tid, constraints);
         isBlockProgressing  = __syncthreads_or(isThreadProgressing);
     
-        isThreadInvalid     = fillBoard(board, tid, constraints, isThreadProgressing, isSquareSet, mutexBoard);
+        isThreadInvalid     = fillBoard(board, tid, constraints, isThreadProgressing, isSquareSet, takenValues);
         isBlockInvalid      = __syncthreads_or(isThreadInvalid);
         isBlockProgressing  = __syncthreads_or(isThreadProgressing);
         squaresSet          = __syncthreads_count(isSquareSet);
@@ -635,7 +429,6 @@ __global__ void solveBoardBFSKernel(board_t* boards, uchar* solvedBoardStatus, i
 __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t& constraints, int* forkedBoardsCount, int* nextBoardId, int& squareToFork, bool& canForkBeMade, int& boardId)
 {
     uint availableDigits;
-    uint digit;
     int  digitsCount;
     bool locked = true;
     board_t* forkedBoard;
@@ -665,18 +458,10 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
         {
             *forkedBoardsCount += digitsCount - 1;
             canForkBeMade = true;
-
-            //debug
-            if (*forkedBoardsCount == 0)
-            {
-                int errxd = 3;
-                errxd = 4;
-            }
         }
 
         mutex = 0;
     }
-    int ku = canForkBeMade ? 1:0;
     __syncthreads();
 
     if (canForkBeMade == false)
@@ -685,13 +470,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
         __syncthreads();
 
         forkedBoard = boards + boardId;
-
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
 
         forkedBoard->cells[tid] = board[tid];
         __syncthreads();
@@ -706,13 +484,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
 
         forkedBoard = boards + boardId;
 
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
-
         forkedBoard->cells[tid] = board[tid];
         if (tid == 0) forkedBoard->cells[squareToFork] = 1;
         __syncthreads();
@@ -723,13 +494,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
         __syncthreads();
 
         forkedBoard = boards + boardId;
-
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
 
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 2;
@@ -742,13 +506,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
 
         forkedBoard = boards + boardId;
 
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
-
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 3;
         __syncthreads();
@@ -759,13 +516,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
         __syncthreads();
 
         forkedBoard = boards + boardId;
-
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
 
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 4;
@@ -778,13 +528,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
 
         forkedBoard = boards + boardId;
 
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
-
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 5;
         __syncthreads();
@@ -795,13 +538,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
         __syncthreads();
 
         forkedBoard = boards + boardId;
-
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
 
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 6;
@@ -814,13 +550,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
 
         forkedBoard = boards + boardId;
 
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
-
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 7;
         __syncthreads();
@@ -831,12 +560,6 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
         __syncthreads();
 
         forkedBoard = boards + boardId;
-
-        if (boardId >= 400)
-        {
-            int nie = 3;
-            nie = 4;
-        }
 
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 8;
@@ -849,29 +572,27 @@ __device__ int forkBoard(board_t* boards, board_t& board, int tid, constraints_t
 
         forkedBoard = boards + boardId;
 
-        //debug
-        if (boardId >= 400)
-        {
-            int a = 3;
-            a = 4;
-        }
-
         forkedBoard->cells[tid] = board[tid];
         if (tid == squareToFork) forkedBoard->cells[tid] = 9;
         __syncthreads();
     }
 }
 
-void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_forkedBoardsCount, int* dev_nextBoardId, board_t* solvedBoard)
+void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_forkedBoardsCount, int* dev_nextBoardId, board_t* solvedBoard, 
+    std::chrono::milliseconds& copyMemoryDuration, std::chrono::milliseconds& dfsDuration, std::chrono::milliseconds& bfsDuration)
 {
     int     kernelIter = 0;
     int     forkedBoardsCount = 1;
     int     nextBoardId;
     uchar   solvedBoardStatus;
+    std::chrono::steady_clock::time_point start, end;
 
-    // forking & solving board
     do
     {
+        #pragma region BFS
+
+        start = std::chrono::high_resolution_clock::now();
+
         solveBoardBFSKernel<<<forkedBoardsCount, THREADS_IN_BLOCK_NUM>>>(dev_boards, dev_solvedBoardStatus, dev_forkedBoardsCount, dev_nextBoardId);
 
         cudaStatus = cudaGetLastError();
@@ -880,16 +601,33 @@ void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_fork
         cudaStatus = cudaDeviceSynchronize();
         validateCudaStatus(cudaStatus);
 
+        end = std::chrono::high_resolution_clock::now();
+        bfsDuration += std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        #pragma endregion
+
+        start = std::chrono::high_resolution_clock::now();
+
         cudaStatus = cudaMemcpy(&solvedBoardStatus, dev_solvedBoardStatus, sizeof(uchar), cudaMemcpyDeviceToHost);
         validateCudaStatus(cudaStatus);
 
+        end = std::chrono::high_resolution_clock::now();
+        copyMemoryDuration += std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
         if (solvedBoardStatus == BoardStatus::Solved)
         {
+            start = std::chrono::high_resolution_clock::now();
+
             cudaStatus = cudaMemcpy(solvedBoard, dev_boards + 2 * BOARDS_BATCH_SIZE, sizeof(board_t), cudaMemcpyDeviceToHost);
             validateCudaStatus(cudaStatus);
 
+            end = std::chrono::high_resolution_clock::now();
+            copyMemoryDuration += std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
             return;
         }
+
+        start = std::chrono::high_resolution_clock::now();
 
         cudaStatus = cudaMemcpy(&forkedBoardsCount, dev_forkedBoardsCount, sizeof(int), cudaMemcpyDeviceToHost);
         validateCudaStatus(cudaStatus);
@@ -897,15 +635,21 @@ void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_fork
         cudaStatus = cudaMemcpy(&nextBoardId, dev_nextBoardId, sizeof(int), cudaMemcpyDeviceToHost);
         validateCudaStatus(cudaStatus);
 
+        end = std::chrono::high_resolution_clock::now();
+        copyMemoryDuration += std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
         cudaStatus = cudaMemcpy(dev_boards, dev_boards + nextBoardId - forkedBoardsCount, sizeof(board_t) * forkedBoardsCount, cudaMemcpyDeviceToDevice);
         validateCudaStatus(cudaStatus);
 
         cudaStatus = cudaMemset(dev_nextBoardId, forkedBoardsCount, 1);
         validateCudaStatus(cudaStatus);
 
-    } while (forkedBoardsCount <= BOARDS_BATCH_SIZE - 8 && kernelIter++ <= MAX_KERNEL_ITERATIONS);    // I will still have place for at least one full fork 
-                                                                                                        // from one square of required within my forked boards batch
-    // solving board
+    } while (forkedBoardsCount <= BOARDS_BATCH_SIZE - 8 && kernelIter++ <= MAX_KERNEL_ITERATIONS);  
+    
+    #pragma region DFS
+
+    start = std::chrono::high_resolution_clock::now();
+
     solveBoardDFSKernel<<<forkedBoardsCount, THREADS_IN_BLOCK_NUM>>>(dev_boards, dev_solvedBoardStatus);
 
     cudaStatus = cudaGetLastError();
@@ -913,6 +657,13 @@ void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_fork
 
     cudaStatus = cudaDeviceSynchronize();
     validateCudaStatus(cudaStatus);
+
+    end = std::chrono::high_resolution_clock::now();
+    dfsDuration += std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    #pragma endregion
+
+    start = std::chrono::high_resolution_clock::now();
 
     cudaStatus = cudaMemcpy(&solvedBoardStatus, dev_solvedBoardStatus, sizeof(uchar), cudaMemcpyDeviceToHost);
     validateCudaStatus(cudaStatus);
@@ -927,6 +678,9 @@ void solveBoard(board_t* dev_boards, uchar* dev_solvedBoardStatus, int* dev_fork
         memset(solvedBoard, 0, sizeof(board_t));
     }
 
+    end = std::chrono::high_resolution_clock::now();
+    copyMemoryDuration += std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
     return;
 }
 
@@ -936,6 +690,8 @@ void solveBoards(board_t* inputBoards, board_t* solvedBoards)
     uchar*      dev_solvedBoardStatus;
     int*        dev_forkedBoardsCount;
     int*        dev_nextBoardId;
+    std::chrono::milliseconds copyMemoryDuration(0), bfsDuration(0), dfsDuration(0);
+    std::chrono::steady_clock::time_point start, end;
     
     #pragma region Device_memory_allocation
 
@@ -957,6 +713,8 @@ void solveBoards(board_t* inputBoards, board_t* solvedBoards)
     {
         #pragma region Data_for_solving_sudoku_preparation
 
+        start = std::chrono::high_resolution_clock::now();
+
         cudaStatus = cudaMemcpy(dev_boards, inputBoards + i, sizeof(board_t), cudaMemcpyHostToDevice);
         validateCudaStatus(cudaStatus);
 
@@ -969,10 +727,17 @@ void solveBoards(board_t* inputBoards, board_t* solvedBoards)
         cudaStatus = cudaMemset(dev_nextBoardId, 1, 1);
         validateCudaStatus(cudaStatus);
 
+        end = std::chrono::high_resolution_clock::now();
+        copyMemoryDuration += std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
         #pragma endregion
 
-        solveBoard(dev_boards, dev_solvedBoardStatus, dev_forkedBoardsCount, dev_nextBoardId, solvedBoards + i);
+        solveBoard(dev_boards, dev_solvedBoardStatus, dev_forkedBoardsCount, dev_nextBoardId, solvedBoards + i, copyMemoryDuration, dfsDuration, bfsDuration);
     }
+
+    std::cout << "gpu - copying data to CPU: " << std::setw(7) << 0.001 * copyMemoryDuration.count() << " nsec" << std::endl;
+    std::cout << "gpu - bfs part: " << std::setw(7) << 0.001 * bfsDuration.count() << " nsec" << std::endl;
+    std::cout << "gpu - dfs part: " << std::setw(7) << 0.001 * dfsDuration.count() << " nsec" << std::endl;
 
     cudaFree(dev_boards);
     cudaFree(dev_solvedBoardStatus);
@@ -1012,110 +777,38 @@ __device__ int updateConstraints(board_t& board, int tid, constraints_t& constra
     return isBlockProgressing;
 }
 
-__device__ int fillBoard(board_t& board, int tid, constraints_t& constraints, int& isThreadProgressing, int& isSquareSet, int& square)
+__device__ int fillBoard(board_t& board, int tid, constraints_t& constraints, int& isThreadProgressing, int& isSquareSet, int* takenValues)
 {
     int isThreadInvalid = 0;
-    uint    availableDigits = 0;
-    uchar digit = 12;
+    uint availableDigits = 0;
+    uchar digit;
 
-    square = 82;
-    isThreadProgressing = 0;
     isSquareSet = 0;
-
-
-
-    
-
-    for (int i = 0; i < 81; i++)
-    {
-        if (tid == i)
-        {
-            if (board[tid] == 0)
-            {
-                availableDigits =
-                    0x000003FE &
-                    (~(constraints.rows[tid / 9]
-                        | constraints.columns[tid % 9]
-                        | constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3]));
-                digit = onePosToDigit(availableDigits);
-
-                if (digit > 0 && digit < 10)
-                {
-                    board[tid] = digit;
-
-                    atomicOr(&(constraints.rows[tid / 9]), (1u << board[tid] & ~1u));
-                    atomicOr(&(constraints.columns[tid % 9]), (1u << board[tid] & ~1u));
-                    atomicOr(&(constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3]), (1u << board[tid] & ~1u));
-
-                    isThreadProgressing = 1;
-                    isSquareSet = 1;
-                }
-
-                if (availableDigits == 0)
-                {
-                    isThreadInvalid = 1;
-                }
-            }
-            else
-            {
-                isSquareSet = 1;
-            }
-        }
-
-        __syncthreads();
-    }
-
-    return isThreadInvalid;
-
-    /*isSquareSet = 0;
-    int     isBoardInvalid = 0;
-    uint    availableDigits;
-    uchar   digit;
-    int locked = true;
-
-    isThreadProgressing = 0;
-    isSquareSet = 0;
-
 
     availableDigits =
         0x000003FE &
         (~(constraints.rows[tid / 9]
             | constraints.columns[tid % 9]
             | constraints.blocks[tid / 9 / 3 * 3 + tid % 9 / 3]));
-
     digit = onePosToDigit(availableDigits);
 
-    
-    int min;
-    
-    if (digit > 0 && digit < 10 && board[tid] == 0)
-    {
-        min = atomicMin(&mutexBoard, tid);
-    }
+    if (tid < 10) takenValues[tid] = INT_MAX;
     __syncthreads();
-
-    if (digit == 0)
-    {
-        isBoardInvalid = 1;
-        mutexBoard = 0;
-
-        return isBoardInvalid;
-    }
 
     if (board[tid] > 0)
     {
         isSquareSet = 1;
-
-        return isBoardInvalid;
+        digit = 12;
     }
 
-    if (min == INT_MAX) return 0;
+    if (digit == 0) isThreadInvalid = 1;
 
-    
+    if (digit > 0 && digit < 10) atomicMin(&takenValues[digit], tid);
+    __syncthreads();
 
-    
-     if (digit < 10 && tid == min)
+    if (digit > 0 && digit < 10 && takenValues[digit] == tid)
     {
+        board[tid] = digit;
 
         atomicOr(&(constraints.rows[tid / 9]), (1u << board[tid] & ~1u));
         atomicOr(&(constraints.columns[tid % 9]), (1u << board[tid] & ~1u));
@@ -1124,10 +817,9 @@ __device__ int fillBoard(board_t& board, int tid, constraints_t& constraints, in
         isThreadProgressing = 1;
         isSquareSet = 1;
     }
-    mutexBoard = 0;
+    __syncthreads();
 
-
-    return isBoardInvalid;*/
+    return isThreadInvalid;
 }
 
 __device__ uchar onePosToDigit(uint a) // O(1)

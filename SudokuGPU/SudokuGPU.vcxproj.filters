@@ -3,6 +3,7 @@
   <ItemGroup>
     <CudaCompile Include="main_program.cu" />
     <CudaCompile Include="config.cuh" />
+    <CudaCompile Include="kernel.cu" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="utils">
@@ -19,5 +20,6 @@
     <ClInclude Include="boards_loader.cuh">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="sudokuCPU.h" />
   </ItemGroup>
 </Project>
